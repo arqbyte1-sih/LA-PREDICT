@@ -1,3 +1,6 @@
+from functools import lru_cache
+from typing import Any
+
 import joblib
 import pandas as pd
 
@@ -5,44 +8,52 @@ from ml.recommendations.recommend import generate_recommendations
 
 
 MODEL_PATH = "ml/artifacts/lapredict_random_forest.joblib"
+MODEL_VERSION = "lapredict-random-forest-v1"
+
+
+@lru_cache(maxsize=1)
+def load_model():
+    return joblib.load(MODEL_PATH)
 
 
 def get_risk_category(risk_score):
     if risk_score <= 33:
         return "Low"
-    elif risk_score <= 66:
+    if risk_score <= 66:
         return "Medium"
     return "High"
 
 
-def predict_project(project):
-    model = joblib.load(MODEL_PATH)
+def predict_project(project: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(project, dict):
+        raise TypeError("project must be a dictionary")
 
-    project_id = project.get("project_id", "UNKNOWN")
-
+    project_id = str(project.get("project_id", "UNKNOWN"))
     input_df = pd.DataFrame([project])
 
-    # Project ID is an identifier, not a predictive feature.
-    model_input = input_df.drop(columns=["project_id"])
+    if "project_id" in input_df.columns:
+        model_input = input_df.drop(columns=["project_id"])
+    else:
+        model_input = input_df
 
+    if model_input.empty:
+        raise ValueError("project input is empty")
+
+    model = load_model()
     probability = float(model.predict_proba(model_input)[0][1])
     predicted_delay = int(model.predict(model_input)[0])
 
     risk_score = round(probability * 100, 2)
     risk_category = get_risk_category(risk_score)
 
-    # Extract model-important features.
     preprocessor = model.named_steps["preprocessor"]
     classifier = model.named_steps["model"]
-
-    transformed = preprocessor.transform(model_input)
     feature_names = preprocessor.get_feature_names_out()
-
     importances = classifier.feature_importances_
 
     factor_data = sorted(
         zip(feature_names, importances),
-        key=lambda x: x[1],
+        key=lambda item: item[1],
         reverse=True,
     )[:5]
 
@@ -64,7 +75,7 @@ def predict_project(project):
         "predicted_delay": predicted_delay,
         "top_risk_factors": risk_factors,
         "recommendations": recommendations,
-        "model_version": "lapredict-random-forest-v1",
+        "model_version": MODEL_VERSION,
     }
 
 
