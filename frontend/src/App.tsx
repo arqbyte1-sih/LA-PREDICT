@@ -33,6 +33,12 @@ import {
   useNavigate,
 } from "react-router-dom";
 
+import {
+  predictLandAcquisitionRisk,
+  projectToMlPredictionRequest,
+  type MlPredictionResponse,
+} from "./services/mlApi";
+
 import "./App.css";
 
 type Role =
@@ -880,6 +886,9 @@ function Dashboard({
   const [selectedRegionId, setSelectedRegionId] = useState("Maharashtra");
   const [activeDetailTab, setActiveDetailTab] = useState("Overview");
   const [activeSection, setActiveSection] = useState("Dashboard Overview");
+  const [mlPrediction, setMlPrediction] = useState<MlPredictionResponse | null>(null);
+  const [mlPredictionLoading, setMlPredictionLoading] = useState(false);
+  const [mlPredictionError, setMlPredictionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!drawerOpen) {
@@ -1015,6 +1024,47 @@ function Dashboard({
 
   const selectedRegion =
     riskRegions.find((region) => region.id === selectedRegionId) ?? riskRegions[0];
+
+  useEffect(() => {
+    if (!selectedProject) {
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadPrediction = async () => {
+      setMlPredictionLoading(true);
+      setMlPredictionError(null);
+      setMlPrediction(null);
+
+      try {
+        const result = await predictLandAcquisitionRisk(projectToMlPredictionRequest(selectedProject));
+
+        if (isMounted) {
+          setMlPrediction(result);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setMlPrediction(null);
+          setMlPredictionError(
+            error instanceof Error
+              ? error.message
+              : "ML prediction service is unavailable. Start the LAPREDICT ML API to view predictive risk analysis.",
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setMlPredictionLoading(false);
+        }
+      }
+    };
+
+    void loadPrediction();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedProject]);
 
   if (!user) {
     return (
@@ -1644,21 +1694,73 @@ function Dashboard({
 
               {activeDetailTab === "Prediction" && (
                 <div className="detail-note">
-                  <div className="demo-badge">Demo Prediction</div>
+                  {mlPredictionLoading && (
+                    <div className="detail-note">
+                      <div className="demo-badge">ML Analysis</div>
+                      <p>Analyzing project risk...</p>
+                    </div>
+                  )}
 
-                  <p>
-                    The current project shows a moderate probability of delay due to
-                    outstanding compensation and approval dependencies. The pattern is
-                    consistent with similar land acquisition projects where field
-                    verification and documentation validation lag behind the planned
-                    schedule.
-                  </p>
+                  {!mlPredictionLoading && mlPredictionError && (
+                    <div className="detail-note">
+                      <div className="demo-badge">ML Analysis</div>
+                      <p>{mlPredictionError}</p>
+                    </div>
+                  )}
 
-                  <ul>
-                    <li>Estimated delay probability: {selectedProject.delayProbability}</li>
-                    <li>Current risk level: {selectedProject.risk}</li>
-                    <li>Primary focus area: {selectedProject.factor}</li>
-                  </ul>
+                  {!mlPredictionLoading && !mlPredictionError && mlPrediction && (
+                    <>
+                      <div className="demo-badge">Live ML Prediction</div>
+
+                      <div className="detail-overview-grid">
+                        <div className="detail-stat-block">
+                          <span>Risk score</span>
+                          <strong>{mlPrediction.risk_score}%</strong>
+                        </div>
+
+                        <div className="detail-stat-block">
+                          <span>Risk category</span>
+                          <strong>{mlPrediction.risk_category}</strong>
+                        </div>
+
+                        <div className="detail-stat-block">
+                          <span>Delay probability</span>
+                          <strong>{mlPrediction.delay_probability.toFixed(4)}</strong>
+                        </div>
+
+                        <div className="detail-stat-block">
+                          <span>Predicted delay</span>
+                          <strong>{mlPrediction.predicted_delay === 1 ? "Delayed" : "On track"}</strong>
+                        </div>
+
+                        <div className="detail-stat-block">
+                          <span>Model version</span>
+                          <strong>{mlPrediction.model_version}</strong>
+                        </div>
+                      </div>
+
+                      <div className="risk-analysis-list" style={{ marginTop: "1rem" }}>
+                        <div>
+                          <span>Top risk factors</span>
+                          <strong>
+                            {mlPrediction.top_risk_factors.map((factor) => factor.factor).join(", ") || "N/A"}
+                          </strong>
+                        </div>
+                      </div>
+
+                      <div className="recommendation-block" style={{ marginTop: "1.25rem" }}>
+                        {mlPrediction.recommendations.map((recommendation, index) => (
+                          <div key={recommendation} className="recommendation-item">
+                            <div className="recommendation-index">0{index + 1}</div>
+                            <div>
+                              <strong>{recommendation}</strong>
+                              <span>Action recommended by the model</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
